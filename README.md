@@ -220,9 +220,169 @@ sudo mount -t cifs //namsac00.file.core.windows.net/document /usr/local/tomcat9 
 3. 생성한 Application Gateway의 Backendpool에 VM추가
 ```
 
-### Database - MySQL
+## Database - MySQL
 
-soon
+### 설치 및 셋팅
+
+```bash
+# 1. MySQL 설치
+apt update -y && apt install -y mysql-server
+
+# 접속(초기 비번 x) or mysql_secure_installation 수행
+sudo mysql -u root
+# 버전확인
+mysql> show variables like "%version%"
+# root 비번셋팅
+alter user 'root'@'localhost' identified by 'PASSWORD'
+
+# 현재 계정 확인
+SELECT User, Host, authentication_string FROM mysql.user;
+
+# tomcat서버에서 사용할 유저 생성
+# 1. database 생성
+CREATE DATABASE hyukjun_db;
+SHOW DATABASES;
+# 2 생성한 database를 사용하는 계정 생성, '%'는 모든 주소 나타냄, 경우에 따라 특정 주소해도 되고 localhost로 자신의 pc만 설정해도됨
+CREATE USER 'hyukjun'@'%' IDENTIFIED BY 'PASSWORD';
+# 3. FLUSH PRIVILEGES 로 mysql의 user테이블에 추가하거나 변경이 있는 경우 이를 반영시켜줌
+FLUSH PRIVILEGES;
+# 4. 생성된 계정 확인
+SELECT User, Host, authentication_string FROM mysql.user;
+# 5. 생성한 계정에 hyukjun database를 사용할 수 있도록 권한 부여
+GRANT ALL PRIVILEGES ON hyukjun_db.* to 'hyukjun'@'%';
+# 6. FLUSH PRIVILEGES
+FLUSH PRIVILEGES;
+# 7. hyukjun 계정의 권한 확인
+SHOW GRANTS FOR 'hyukjun'@'%';
+
+# bind-address 수정
+## mysql의 listen port를 127.0.0.1 에서 0.0.0.0 으로 수정
+### 127.0.0.1 일경우
+#com.mysql.jdbc.exceptions.jdbc4.CommunicationsException: Communications link failure The last packet sent successfully to the server was 0 milliseconds ago. The driver has not received any packets from the server.
+# 에러 발생할 수 있음
+vi /etc/mysql/mysql.conf.d/mysqld.cnf
+#bind-address            = 127.0.0.1 
+bind-address            = 0.0.0.0
+
+## netstat -nltp로 listen port 확인
+..
+tcp        0      0 0.0.0.0:3306            0.0.0.0:*               LISTEN      -
+...
+```
+
+```bash
+# page에 나타낼 table 준비
+CREATE TABLE member_info (
+ seq        INT NOT NULL AUTO_INCREMENT,
+ mb_id     VARCHAR(20),
+ mb_pw    VARCHAR(100),
+ address   VARCHAR(100),
+ mb_tell    VARCHAR(20),  
+  PRIMARY KEY(seq)
+) ENGINE=INNODB CHARSET=utf8;
+
+INSERT INTO member_info (mb_id, mb_pw, address, mb_tell)
+	   	    VALUE('build', 'build1',  '서울특별시 강남구 도곡동', '010-1234-1234');
+INSERT INTO member_info (mb_id, mb_pw, address, mb_tell)
+	   	    VALUE('build01', 'build2',  '서울시 강남구', '010-1111-1111');
+INSERT INTO member_info (mb_id, mb_pw, address, mb_tell)
+	   	    VALUE('build02', 'build3', '서울시 역삼동', '010-2222-2222');
+```
+
+[mysql 설치 와 기본 설정 (on Ubuntu)](https://dejavuqa.tistory.com/317)
+
+### Tomcat-MySQL Connector 설치 - Tomcat Server 에서 작업
+
+```bash
+# connector 설치
+sudo apt install -y libmysql-java
+
+# 설치경로
+/usr/share/java/ -> mysql-connector-java.jar 확인
+
+# tomcat 홈 디렉토리 밑에 라이브러리 폴더에 링크생성(혹은 cp)
+ln -s /usr/share/java/mysql-connector-java.jar /usr/share/tomcat9/lib/mysql-connector-java.jar
+
+# tomcat 재시작
+sudo TOMCATHOME/bin/startup.sh
+```
+
+Database Server를 위한 Internal LoadBalancer 생성
+
+```bash
+Azure Internal Loadbalancer
+형식: Internal
+SKU: Standard
+상태프로브: 3306/tcp
+lb rule: 3306 to 3306
+```
+
+### **DB 연결 확인용 Test jsp 생성**
+
+**→ TOMCATHOME/webapps/ROOT/에 test page 생성**
+
+*DB SERVER IP는 내부 Loadbalancer의 내부 ip 사용
+
+Test Page1
+
+```bash
+<%@ page import = "java.sql.*" %>
+<%
+	Statement stm = null;
+	ResultSet rs = null;
+	Class.forName("com.mysql.jdbc.Driver");
+	String myUrl = "jdbc:mysql://DB_SERVER_IP[InternaL lb ip]:PORT/DB명";
+	Connection conn = DriverManager.getConnection(myUrl, "mysql 아이디", "mysql 패스워드");
+	try {
+        	stm = conn.createStatement();
+        	if(stm.execute("select * from 테이블명")) {
+                	rs = stm.getResultSet();
+        }
+        while(rs.next()) {
+                out.println(rs.getString("컬럼명"));
+                out.println(rs.getString("컬럼명"));
+                out.println(rs.getString("컬럼명"));
+                out.println(rs.getString("컬럼명"));
+                out.println(rs.getString("컬럼명"));
+                out.write("<br>");
+        }
+        rs.close();
+        stm.close();
+}
+catch(Exception e) {
+        out.println("rs.next() ERROR");
+}
+conn.close();
+%>
+```
+
+Test Page2
+
+```bash
+<%@ page import="java.sql.*" contentType="text/html;charset=euc-kr"%>
+<%
+                String DB_URL = "jdbc:mysql://DB_SERVER_IP[InternaL lb ip]:PORT/DATABASE_NAME";
+                String DB_USER = "DB_USERNAME";
+                String DB_PASSWORD= "PASSWORD";
+
+                Connection conn;
+
+                Statement stmt;
+
+                try
+                {
+                        Class.forName("org.gjt.mm.mysql.Driver");
+                        conn = DriverManager.getConnection(DB_URL, DB_USER,DB_PASSWORD);
+                        stmt = conn.createStatement();
+                        conn.close();
+                        out.println("MySQL connected");
+                }
+                catch(Exception e)
+                {
+                        out.println(e);
+                }
+%>
+```
 
 ### Result
 
