@@ -1,2 +1,3 @@
 # Azure Architectures
-<p> Azure 아키텍쳐 구성 연습 </p
+- [3tier](3tier)
+- [3tier with TLS Termination](3tier-tls)
